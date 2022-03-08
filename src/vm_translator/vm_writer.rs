@@ -75,7 +75,7 @@ impl CodeWriter {
                     command.arg2()
                 ),
                 "static" => format!(
-                    "@{0}.{1}\nD=M\n@SP\nA=M\nM=D\n\n@SP\nM=M+1\n",
+                    "@{0}.{1}\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n",
                     self.filename[self.file_index].replace(".vm", ""),
                     command.arg2()
                 ),
