@@ -8,8 +8,8 @@ pub struct CodeWriter {
     jump_gt: usize,
     jump_lt: usize,
     file_index: usize,
-    in_function: bool,
-    function_name: String,
+    function_name: Vec<String>,
+    func_num: usize,
 }
 
 impl CodeWriter {
@@ -20,8 +20,8 @@ impl CodeWriter {
             jump_gt: 0,
             jump_lt: 0,
             file_index: 0,
-            in_function: false,
-            function_name: "NULL".to_string(),
+            function_name: Vec::new(),
+            func_num: 0,
         }
     }
     pub fn set_filename(&mut self, filename: String) {
@@ -121,57 +121,67 @@ impl CodeWriter {
         }
     }
     fn write_init(&mut self) -> String {
-        "@256\nD=A\n@SP\nM=D\n@SYSRETURN\nD=A\n@SP\nA=M\nM=D\n@SP\nM=M+1\n@LCL\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n@ARG\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n@THIS\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n@THAT\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n@SP\nD=M\n@LCL\nM=D\n@MAIN\n0;JMP\n(SYSRETURN)\n".to_string()
+        let out = format!("@256\nD=A\n@SP\nM=D\n@SYSRETURN\nD=A\n@SP\nA=M\nM=D\n@SP\nM=M+1\n@LCL\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n@ARG\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n@THIS\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n@THAT\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n@SP\nD=M\n@ARG\n{}M=D\n@SP\nD=M\n@LCL\nM=D\n@SYS.INIT\n0;JMP\n(SYSRETURN)\n", "D=D-1\n".to_string().repeat(5));
+        self.function_name.push("Sys.init".to_string());
+        out
     }
     fn write_label(&mut self, command: &mut Parser) -> String {
-        if self.in_function {
-            format!("({0}${1})\n", self.function_name, command.arg1())
-        } else {
-            format!("({})\n", command.arg1())
-        }
+        format!(
+            "({0}${1})\n",
+            self.function_name.last().unwrap().to_uppercase(),
+            command.arg1()
+        )
     }
     fn write_goto(&mut self, command: &mut Parser) -> String {
-        if self.in_function {
-            format!("@{0}${1}\n0;JMP\n", self.function_name, command.arg1())
-        } else {
-            format!("@{}\n0;JMP\n", command.arg1())
-        }
+        format!(
+            "@{0}${1}\n0;JMP\n",
+            self.function_name.last().unwrap().to_uppercase(),
+            command.arg1()
+        )
     }
     fn write_if(&mut self, command: &mut Parser) -> String {
-        format!("@SP\nM=M-1\nD=M\nA=D\nD=M\n@{}\nD;JNE\n", command.arg1())
+        format!(
+            "@SP\nM=M-1\nD=M\nA=D\nD=M\n@{0}${1}\nD;JNE\n",
+            self.function_name.last().unwrap().to_uppercase(),
+            command.arg1()
+        )
     }
     fn write_call(&mut self, command: &mut Parser) -> String {
+        self.func_num += 1;
         format!(
-            "@{0}RETURN\nD=A\n@SP\nA=M\nM=D\n@SP\nM=M+1\n",
-            command.arg1().to_uppercase()
+            "@{0}{1}RETURN\nD=A\n@SP\nA=M\nM=D\n@SP\nM=M+1\n",
+            command.arg1().to_uppercase(),
+            self.func_num,
         ) + "@LCL\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n"
             + "@ARG\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n"
             + "@THIS\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n"
             + "@THAT\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n"
             + &format!(
-                "@SP\nD=M\n@ARG\n{}",
-                "M=D-1\n".to_string().repeat(command.arg2() as usize + 5)
+                "@SP\nD=M\n@ARG\n{}M=D\n",
+                "D=D-1\n".to_string().repeat(command.arg2() as usize + 5)
             )
             + "@SP\nD=M\n@LCL\nM=D\n"
             + &format!("@{}\n0;JMP\n", command.arg1().to_uppercase())
-            + &format!("({}RETURN)\n", command.arg1().to_uppercase())
+            + &format!(
+                "({0}{1}RETURN)\n",
+                command.arg1().to_uppercase(),
+                self.func_num
+            )
     }
     fn write_function(&mut self, command: &mut Parser) -> String {
-        self.function_name = command.arg1();
-        self.in_function = true;
+        self.function_name.pop();
+        self.function_name.push(command.arg1());
         format!(
             "({0})\n{1}",
-            self.function_name,
+            self.function_name.last().unwrap().to_uppercase(),
             "@0\nD=A\n@SP\nA=M\nM=D\n@SP\nM=M+1\n"
                 .to_string()
                 .repeat(command.arg2() as usize)
         )
     }
     fn write_return(&mut self) -> String {
-        let out = format!("@LCL\nD=M\n@{4}RET\n{0}@SP\nM=M-1\nA=M\nD=M\n@ARG\nA=M\nM=D\n@ARG\nD=M\n@SP\nM=D+1\n@LCL\nD=M\n@THAT\nM=D-1\n@THIS\n{1}@ARG\n{2}@LCL\n{3}@{4}RET\n0;JMP\n", "M=D-1\n".to_string().repeat(5), "M=D-1\n".to_string().repeat(2), "M=D-1\n".to_string().repeat(3), "M=D-1\n".to_string().repeat(4), self.function_name.to_uppercase());
-        self.function_name = "NULL".to_string();
-        self.in_function = false;
-        out
+        let out = "@LCL\nD=M\n@R13\nM=D\n@5\nD=A\n@R13\nA=M-D\nD=M\n@R14\nM=D\n@SP\nM=M-1\nA=M\nD=M\n@ARG\nA=M\nM=D\n@ARG\nD=M+1\n@SP\nM=D\n@R13\nAM=M-1\nD=M\n@THAT\nM=D\n@R13\nAM=M-1\nD=M\n@THIS\nM=D\n@R13\nAM=M-1\nD=M\n@ARG\nM=D\n@R13\nAM=M-1\nD=M\n@LCL\nM=D\n@R14\nA=M\n0;JMP\n";
+        out.to_string()
     }
     pub fn write_file(&mut self, dir_name: &str, command: &mut Parser) {
         let outfile = dir_name.to_string() + ".asm";
