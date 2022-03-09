@@ -8,6 +8,8 @@ pub struct CodeWriter {
     jump_gt: usize,
     jump_lt: usize,
     file_index: usize,
+    in_function: bool,
+    function_name: String,
 }
 
 impl CodeWriter {
@@ -18,12 +20,14 @@ impl CodeWriter {
             jump_gt: 0,
             jump_lt: 0,
             file_index: 0,
+            in_function: false,
+            function_name: "NULL".to_string(),
         }
     }
     pub fn set_filename(&mut self, filename: String) {
         self.filename.push(filename);
     }
-    pub fn write_arithmetic(&mut self, command: &mut Parser) -> String {
+    fn write_arithmetic(&mut self, command: &mut Parser) -> String {
         match command.arg1().as_str() {
             "add" => "@SP\nM=M-1\nD=M\nA=D\nD=M\nA=A-1\nM=M+D\n".to_string(),
             "sub" => "@SP\nM=M-1\nD=M\nA=D\nD=M\nA=A-1\nM=M-D\n".to_string(),
@@ -46,7 +50,7 @@ impl CodeWriter {
             _ => "".to_string(),
         }
     }
-    pub fn write_push_pop(&mut self, command: &mut Parser) -> String {
+    fn write_push_pop(&mut self, command: &mut Parser) -> String {
         if command.command_type() == CommandType::C_PUSH {
             match command.command[1].as_str() {
                 "constant" => format!("@{0}\nD=A\n@SP\nA=M\nM=D\n@SP\nM=M+1\n", command.arg2()),
@@ -116,19 +120,78 @@ impl CodeWriter {
             }
         }
     }
+    fn write_init(&mut self) -> String {
+        "@256\nD=A\n@SP\nM=D\n@SYSRETURN\nD=A\n@SP\nA=M\nM=D\n@SP\nM=M+1\n@LCL\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n@ARG\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n@THIS\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n@THAT\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n@SP\nD=M\n@LCL\nM=D\n@MAIN\n0;JMP\n(SYSRETURN)\n".to_string()
+    }
+    fn write_label(&mut self, command: &mut Parser) -> String {
+        if self.in_function {
+            format!("({0}${1})\n", self.function_name, command.arg1())
+        } else {
+            format!("({})\n", command.arg1())
+        }
+    }
+    fn write_goto(&mut self, command: &mut Parser) -> String {
+        if self.in_function {
+            format!("@{0}${1}\n0;JMP\n", self.function_name, command.arg1())
+        } else {
+            format!("@{}\n0;JMP\n", command.arg1())
+        }
+    }
+    fn write_if(&mut self, command: &mut Parser) -> String {
+        format!("@SP\nM=M-1\nD=M\nA=D\nD=M\n@{}\nD;JNE\n", command.arg1())
+    }
+    fn write_call(&mut self, command: &mut Parser) -> String {
+        format!(
+            "@{0}RETURN\nD=A\n@SP\nA=M\nM=D\n@SP\nM=M+1\n",
+            command.arg1().to_uppercase()
+        ) + "@LCL\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n"
+            + "@ARG\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n"
+            + "@THIS\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n"
+            + "@THAT\nD=M\n@SP\nA=M\nM=D\n@SP\nM=M+1\n"
+            + &format!(
+                "@SP\nD=M\n@ARG\n{}",
+                "M=D-1\n".to_string().repeat(command.arg2() as usize + 5)
+            )
+            + "@SP\nD=M\n@LCL\nM=D\n"
+            + &format!("@{}\n0;JMP\n", command.arg1().to_uppercase())
+            + &format!("({}RETURN)\n", command.arg1().to_uppercase())
+    }
+    fn write_function(&mut self, command: &mut Parser) -> String {
+        self.function_name = command.arg1();
+        self.in_function = true;
+        format!(
+            "({0})\n{1}",
+            self.function_name,
+            "@0\nD=A\n@SP\nA=M\nM=D\n@SP\nM=M+1\n"
+                .to_string()
+                .repeat(command.arg2() as usize)
+        )
+    }
+    fn write_return(&mut self) -> String {
+        let out = format!("@LCL\nD=M\n@{4}RET\n{0}@SP\nM=M-1\nA=M\nD=M\n@ARG\nA=M\nM=D\n@ARG\nD=M\n@SP\nM=D+1\n@LCL\nD=M\n@THAT\nM=D-1\n@THIS\n{1}@ARG\n{2}@LCL\n{3}@{4}RET\n0;JMP\n", "M=D-1\n".to_string().repeat(5), "M=D-1\n".to_string().repeat(2), "M=D-1\n".to_string().repeat(3), "M=D-1\n".to_string().repeat(4), self.function_name.to_uppercase());
+        self.function_name = "NULL".to_string();
+        self.in_function = false;
+        out
+    }
     pub fn write_file(&mut self, dir_name: &str, command: &mut Parser) {
         let outfile = dir_name.to_string() + ".asm";
         let mut write_str: String = String::new();
+        write_str += &self.write_init();
         while command.advance() {
-            if command.command_type() == CommandType::C_ARITHMETIC {
-                write_str += &self.write_arithmetic(command);
-            } else if command.command_type() == CommandType::C_PUSH
-                || command.command_type() == CommandType::C_POP
-            {
-                write_str += &self.write_push_pop(command);
-            } else if command.command_type() == CommandType::FILE_START {
-                self.file_index += 1;
-            }
+            match command.command_type() {
+                CommandType::C_ARITHMETIC => write_str += &self.write_arithmetic(command),
+                CommandType::C_PUSH | CommandType::C_POP => {
+                    write_str += &self.write_push_pop(command)
+                }
+                CommandType::C_LABEL => write_str += &self.write_label(command),
+                CommandType::C_GOTO => write_str += &self.write_goto(command),
+                CommandType::C_IF => write_str += &self.write_if(command),
+                CommandType::C_CALL => write_str += &self.write_call(command),
+                CommandType::C_FUNCTION => write_str += &self.write_function(command),
+                CommandType::C_RETURN => write_str += &self.write_return(),
+                CommandType::FILE_START => self.file_index += 1,
+                _ => (),
+            };
         }
         let mut f = BufWriter::new(File::create(outfile).unwrap());
         write!(f, "{}", write_str).unwrap();

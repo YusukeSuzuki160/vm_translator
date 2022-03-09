@@ -53,8 +53,12 @@ impl Parser {
         let command: Vec<&str> = self.vm_code[self.now_line].split(" ").collect();
         self.command = Vec::new();
         for v in &command {
-            self.command
-                .push(v.replace(" ", "").replace("\n", "").to_string());
+            self.command.push(
+                v.replace(" ", "")
+                    .replace("\n", "")
+                    .replace("\t", "")
+                    .to_string(),
+            );
         }
         self.now_line += 1;
         self.c_type = match self.command[0].as_str() {
@@ -65,10 +69,11 @@ impl Parser {
             "pop" => CommandType::C_POP,
             "label" => CommandType::C_LABEL,
             "goto" => CommandType::C_GOTO,
-            "if" => CommandType::C_IF,
+            "if-goto" => CommandType::C_IF,
             "function" => CommandType::C_FUNCTION,
             "return" => CommandType::C_RETURN,
             "call" => CommandType::C_CALL,
+            "start" => CommandType::FILE_START,
             _ => CommandType::NULL,
         }
     }
